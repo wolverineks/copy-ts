@@ -1,6 +1,8 @@
 {
   "name": "copy-ts",
   "displayName": "copy-ts",
+  "publisher": "wolverineks",
+  "repository": "https://github.com/wolverineks/copy-ts",
   "description": "Copy typescript. Paste javascript.",
   "version": "0.0.1",
   "engines": {

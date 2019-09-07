@@ -1,35 +1,77 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 import { transform } from "sucrase";
 import * as clipboard from "copy-paste"
 
-export function activate(context: vscode.ExtensionContext) {
-	const disposable = vscode.commands.registerCommand('extension.copy-ts', () => {
-		const editor = vscode.window.activeTextEditor;
-		if (!editor) return
+export const activate = (context: vscode.ExtensionContext) => {
+	const copyTs = vscode.commands.registerCommand('extension.copy-ts', async () => {
+		const [selectedText, getTextError] = getSelectedText(vscode);
+		if (getTextError) return notify.error(getTextError)
 
-		const originalCode = editor.document.getText(editor.selection);
-		const [compiledCode, error] = tryCatch<string>(() => transform(originalCode, { transforms: ["typescript"] }).code)
+		const [javascript, compileError] = toJavascript(selectedText!)
+		if (compileError) return notify.error(compileError)
 
-		if (error) {
-			vscode.window.showInformationMessage(`Error: ${error.message}`);
-			return
-		}
+		const [_result, copyError] = await toClipboard(javascript!)
+		if (copyError) return notify.error(copyError)
 
-		clipboard.copy(compiledCode, () => vscode.window.showInformationMessage("Successfully copied as javascript"))
-	});
+		return notify.success("Successfully copied javascript to clipboard")
+	})
 
-	context.subscriptions.push(disposable);
+	context.subscriptions.push(copyTs);
 }
 
-// this method is called when your extension is deactivated
-export function deactivate() { }
+export const deactivate = () => { }
 
-const tryCatch = <Data>(func: Function): [Data, undefined] | [undefined, Error] => {
+// DOMAIN
+const toJavascript = (typescript: string) => tryCatch<string>(() => transform(typescript, { transforms: ["typescript"] }).code)
+const toClipboard = (text: string) => tryCatchP<string>(() => toPromise<string>(clipboard.copy, [text]))
+
+// VSCODE API WRAPPERS
+const getEditor = (context: typeof vscode): [vscode.TextEditor, undefined] | [undefined, Error] =>
+	context.window.activeTextEditor ? [context.window.activeTextEditor, undefined] : [undefined, new Error('No active text editor')]
+
+const getText = (editor: vscode.TextEditor, range: vscode.Range) => tryCatch<string>(() => editor.document.getText(range))
+
+const getSelectedText = (context: typeof vscode): [string, undefined] | [undefined, Error] => {
+	const [editor, getEditorError] = getEditor(context)
+	if (getEditorError) return [undefined, getEditorError]
+
+	const [selectedText, getTextError] = getText(editor!, editor!.selection)
+	if (getTextError) return [undefined, getTextError]
+
+	return [selectedText!, undefined]
+}
+
+const notify = {
+	success: (message: string) => vscode.window.showInformationMessage(message),
+	error: (error: Error, ...items: string[]) => vscode.window.showErrorMessage(error.message, ...items),
+}
+
+// UTILITIES
+const tryCatch = <T>(func: () => T) => {
+	const onSuccess = (result: T): [T, undefined] => [result, undefined]
+	const onError = (error: Error): [undefined, Error] => [undefined, error]
+
 	try {
-		return [func(), undefined]
+		return onSuccess(func())
 	} catch (error) {
-		return [undefined, error]
+		return onError(error)
 	}
 }
+
+const tryCatchP = <T>(func: () => Promise<T>) => {
+	const onSuccess = (result: T): [T, undefined] => [result, undefined]
+	const onError = (error: Error): [undefined, Error] => [undefined, error]
+
+	return func()
+		.then(onSuccess)
+		.catch(onError)
+}
+
+const toPromise = <T>(func: Function, args: any[] = []): Promise<T> =>
+	new Promise((resolve, reject) => {
+		const callback = (error: Error, result: T) => {
+			if (error) return reject(error)
+			if (!error) return resolve(result)
+		}
+		func(...args, callback)
+	})
